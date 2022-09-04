@@ -97,7 +97,7 @@ SAVE_FILE = "../working/baseline_model"
 EPOCHS = 200
 IS_LOCAL = True
 ACCUMULATION_STEPS = 1
-INPUT_SIZE= 512
+INPUT_SIZE = 256
 
 IS_LOCAL = True
 IS_FULL = False
@@ -110,7 +110,7 @@ if not isdir(TRAIN):
     MASKS = '../../hubmap-organ-segmentation/train_annotations/'
     LABELS = '../../hubmap-organ-segmentation/train.csv'
     SAVE_FILE = "baseline_model"
-    BATCH_SIZE=2
+    BATCH_SIZE = 8
     IS_LOCAL = True
 else:
     BATCH_SIZE=32
@@ -458,7 +458,6 @@ class HuBMAPDataset(Dataset):
         logger.info("number of files {}".format(len(self.fnames)))
         
     def __len__(self):
-        return 2
         return len(self.fnames)
     
     def __getitem__(self, idx):
@@ -476,7 +475,7 @@ class HuBMAPDataset(Dataset):
         return img2tensor((img/255.0 - mean)/std),img2tensor(mask)
 
     
-def get_aug(p=1.0):
+def get_train_aug(p=1.0):
     return Compose([
         Resize(INPUT_SIZE, INPUT_SIZE), 
         HorizontalFlip(),
@@ -496,6 +495,11 @@ def get_aug(p=1.0):
         ], p=0.3),
     ], p=p)
 
+
+def get_val_aug(p=1.0):
+    return Compose([
+        Resize(INPUT_SIZE, INPUT_SIZE), 
+    ], p=p)
 
 # # Model
 # The model used in this kernel is based on a U-shape network (UneXt50, see image below), which I used in Severstal and Understanding Clouds competitions. The idea of a U-shape network is coming from a [Unet](https://arxiv.org/pdf/1505.04597.pdf) architecture proposed in 2015 for medical images: the encoder part creates a representation of features at different levels, while the decoder combines the features and generates a prediction as a segmentation mask. The skip connections between encoder and decoder allow us to utilize features from the intermediate conv layers of the encoder effectively, without a need for the information to go the full way through entire encoder and decoder. The latter is especially important to link the predicted mask to the specific pixels of the detected object. Later people realized that ImageNet pretrained computer vision models could drastically improve the quality of a segmentation model because of optimized architecture of the encoder, high encoder capacity (in contrast to one used in the original Unet), and the power of the transfer learning.
@@ -858,7 +862,6 @@ def train_one_epoch(model, dataloader, optimizer, loss_fn, metrics):
 
     for batch_idx, (imgs, masks) in enumerate(dataloader):
         imgs, masks = imgs.cuda(), masks.cuda()
-        print(imgs.shape, masks.shape)
         preds = model(imgs)
         loss = loss_fn(preds, masks)
         loss.backward()
@@ -897,28 +900,28 @@ def val_one_epoch(model, dataloader, optimizer, loss_fn, metrics):
     metrics_meters = {metric.__name__(): AverageValueMeter() for metric in metrics}
     model.eval()
 
-    
     for idx, (imgs, masks) in enumerate(dataloader):
-        imgs, masks = imgs.cuda(), masks.cuda()
-        preds = model(imgs)
-        loss = loss_fn(preds, masks)
-        
-        # update loss logs
-        loss_value = loss.cpu().detach().numpy()
-        loss_meter.add(loss_value)
-        loss_logs = {"loss": loss_meter.mean}
+        with torch.no_grad():
+            imgs, masks = imgs.cuda(), masks.cuda()
+            preds = model(imgs)
+            loss = loss_fn(preds, masks)
+            
+            # update loss logs
+            loss_value = loss.cpu().detach().numpy()
+            loss_meter.add(loss_value)
+            loss_logs = {"loss": loss_meter.mean}
 
-        logs.update(loss_logs)
+            logs.update(loss_logs)
 
-                
-        # update metrics logs
-        for metric_fn in metrics:
-            metric_fn.accumulate(preds, masks)
-            metric_value = metric_fn.value
-            metrics_meters[metric_fn.__name__()].add(metric_value)
-        metrics_logs = {k: v.mean for k, v in metrics_meters.items()}
-        logs.update(metrics_logs)
-    return logs
+                    
+            # update metrics logs
+            for metric_fn in metrics:
+                metric_fn.accumulate(preds, masks)
+                metric_value = metric_fn.value
+                metrics_meters[metric_fn.__name__()].add(metric_value)
+            metrics_logs = {k: v.mean for k, v in metrics_meters.items()}
+            logs.update(metrics_logs)
+        return logs
 
 
 # In[17]:
@@ -954,11 +957,13 @@ def train_local():
             model_info = "_{}_{}_{}.pth".format(epoch,BATCH_SIZE, round(max_score, 4))
             save_model = SAVE_FILE+model_info
             torch.save(model, save_model)
-            logger.info('Model saved at {}'.format( save_model))
+            logger.info('Model saved at {}'.format(save_model))
             if os.path.isfile(previous_path):
                 os.remove(previous_path)
                 logger.info("removed: {}".format(previous_path))
             previous_path = save_model
+        else:
+            logger.info('Current score {}, previous score {}'.format(valid_logs['Dice soft'], max_score))
         if epoch == 25:
             optimizer.param_groups[0]['lr'] = 1e-5
             logger.info('Decrease decoder learning rate to 1e-5!')
@@ -992,14 +997,14 @@ def train_online():
 
 dice = Dice_th(np.arange(0.2,0.7,0.1))
 
-train_dataset = HuBMAPDataset(train=True, tfms=get_aug())
-val_dataset = HuBMAPDataset(train=False)
+train_dataset = HuBMAPDataset(train=True, tfms=get_train_aug())
+val_dataset = HuBMAPDataset(train=False, tfms=get_val_aug())
 
 train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE,
-            num_workers=NUM_WORKERS, drop_last=False, pin_memory=False, shuffle=True)
+            num_workers=NUM_WORKERS, drop_last=True, pin_memory=False, shuffle=True)
 
 val_dataloader = DataLoader(val_dataset, batch_size=BATCH_SIZE,
-            num_workers=NUM_WORKERS, drop_last=False, pin_memory=False, shuffle=False)
+            num_workers=NUM_WORKERS, drop_last=True, pin_memory=False, shuffle=False)
 
 from datetime import datetime
 
