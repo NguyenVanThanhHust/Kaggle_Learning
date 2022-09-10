@@ -74,41 +74,6 @@ def iou(preds, labels, C, EMPTY=1., ignore=None, per_image=False):
 # --------------------------- BINARY LOSSES ---------------------------
 
 
-def lovasz_hinge(logits, labels, per_image=True, ignore=None):
-    """
-    Binary Lovasz hinge loss
-      logits: [B, H, W] Variable, logits at each pixel (between -\infty and +\infty)
-      labels: [B, H, W] Tensor, binary ground truth masks (0 or 1)
-      per_image: compute the loss per image instead of per batch
-      ignore: void class id
-    """
-    if per_image:
-        loss = f_mean(lovasz_hinge_flat(*flatten_binary_scores(log.unsqueeze(0), lab.unsqueeze(0), ignore))
-                          for log, lab in zip(logits, labels))
-    else:
-        loss = lovasz_hinge_flat(*flatten_binary_scores(logits, labels, ignore))
-    return loss
-
-
-def lovasz_hinge_flat(logits, labels):
-    """
-    Binary Lovasz hinge loss
-      logits: [P] Variable, logits at each prediction (between -\infty and +\infty)
-      labels: [P] Tensor, binary ground truth labels (0 or 1)
-      ignore: label to ignore
-    """
-    if len(labels) == 0:
-        # only void pixels, the gradients should be 0
-        return logits.sum() * 0.
-    signs = 2. * labels.float() - 1.
-    errors = (1. - logits * Variable(signs))
-    errors_sorted, perm = torch.sort(errors, dim=0, descending=True)
-    perm = perm.data
-    gt_sorted = labels[perm]
-    grad = lovasz_grad(gt_sorted)
-    #loss = torch.dot(F.relu(errors_sorted), Variable(grad))
-    loss = torch.dot(F.elu(errors_sorted)+1, Variable(grad))
-    return loss
 
 
 def flatten_binary_scores(scores, labels, ignore=None):
@@ -126,66 +91,11 @@ def flatten_binary_scores(scores, labels, ignore=None):
     return vscores, vlabels
 
 
-class StableBCELoss(torch.nn.modules.Module):
-    def __init__(self):
-         super(StableBCELoss, self).__init__()
-    def forward(self, input, target):
-         neg_abs = - input.abs()
-         loss = input.clamp(min=0) - input * target + (1 + neg_abs.exp()).log()
-         return loss.mean()
-
-
-def binary_xloss(logits, labels, ignore=None):
-    """
-    Binary Cross entropy loss
-      logits: [B, H, W] Variable, logits at each pixel (between -\infty and +\infty)
-      labels: [B, H, W] Tensor, binary ground truth masks (0 or 1)
-      ignore: void class id
-    """
-    logits, labels = flatten_binary_scores(logits, labels, ignore)
-    loss = StableBCELoss()(logits, Variable(labels.float()))
-    return loss
-
 
 # --------------------------- MULTICLASS LOSSES ---------------------------
 
 
-def lovasz_softmax(probas, labels, only_present=False, per_image=False, ignore=None):
-    """
-    Multi-class Lovasz-Softmax loss
-      probas: [B, C, H, W] Variable, class probabilities at each prediction (between 0 and 1)
-      labels: [B, H, W] Tensor, ground truth labels (between 0 and C - 1)
-      only_present: average only on classes present in ground truth
-      per_image: compute the loss per image instead of per batch
-      ignore: void class labels
-    """
-    if per_image:
-        loss = f_mean(lovasz_softmax_flat(*flatten_probas(prob.unsqueeze(0), lab.unsqueeze(0), ignore), only_present=only_present)
-                          for prob, lab in zip(probas, labels))
-    else:
-        loss = lovasz_softmax_flat(*flatten_probas(probas, labels, ignore), only_present=only_present)
-    return loss
 
-
-def lovasz_softmax_flat(probas, labels, only_present=False):
-    """
-    Multi-class Lovasz-Softmax loss
-      probas: [P, C] Variable, class probabilities at each prediction (between 0 and 1)
-      labels: [P] Tensor, ground truth labels (between 0 and C - 1)
-      only_present: average only on classes present in ground truth
-    """
-    C = probas.size(1)
-    losses = []
-    for c in range(C):
-        fg = (labels == c).float() # foreground for class c
-        if only_present and fg.sum() == 0:
-            continue
-        errors = (Variable(fg) - probas[:, c]).abs()
-        errors_sorted, perm = torch.sort(errors, 0, descending=True)
-        perm = perm.data
-        fg_sorted = fg[perm]
-        losses.append(torch.dot(errors_sorted, Variable(lovasz_grad(fg_sorted))))
-    return f_mean(losses)
 
 
 def flatten_probas(probas, labels, ignore=None):
@@ -201,12 +111,6 @@ def flatten_probas(probas, labels, ignore=None):
     vprobas = probas[valid.nonzero().squeeze()]
     vlabels = labels[valid]
     return vprobas, vlabels
-
-def xloss(logits, labels, ignore=None):
-    """
-    Cross entropy loss
-    """
-    return F.cross_entropy(logits, Variable(labels), ignore_index=255)
 
 
 # --------------------------- HELPER FUNCTIONS ---------------------------
@@ -266,7 +170,7 @@ sz = 256    # the size of tiles
 reduce = 4  # reduce the original images by 4 times
 TH = 0.225  # threshold for positive predictions
 DATA = '../input/hubmap-organ-segmentation/test_images/'
-MODEL_FOLDER = "../input/"
+MODEL_FOLDER = "../input/models/"
 sample_submission_file = join('../input/hubmap-organ-segmentation', 'sample_submission.csv') 
 MODELS = []
 if not isdir(DATA):
