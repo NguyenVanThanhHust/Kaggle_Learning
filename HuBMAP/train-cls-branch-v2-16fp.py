@@ -98,7 +98,7 @@ if not isdir(TRAIN):
     MASKS = '../../hubmap-organ-segmentation/hubmap-2022-256x256/mask/'
     LABELS = '../../hubmap-organ-segmentation/train.csv'
     SAVE_FILE = "cls_model"
-    BATCH_SIZE=2
+    BATCH_SIZE=8
     IS_LOCAL = True
 else:
     BATCH_SIZE=32
@@ -977,3 +977,4 @@ now = datetime.now()
 
 
 # In[30]:
+
