@@ -1,1 +1,1 @@
-# Hubmap Competition
+# Kaggle Competitions Approach
